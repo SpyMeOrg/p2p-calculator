@@ -494,6 +494,139 @@ def create_profit_chart(profit_df):
 
     return fig
 
+# Function to export all data to Excel
+def export_to_excel(results):
+    try:
+        import io
+        from openpyxl import Workbook
+        from openpyxl.utils.dataframe import dataframe_to_rows
+        from openpyxl.styles import Font, Alignment, PatternFill
+
+        # Create a BytesIO object to store the Excel file
+        output = io.BytesIO()
+
+        # Create a workbook
+        wb = Workbook()
+
+        # Remove the default sheet
+        wb.remove(wb.active)
+
+        # Create sheets for each data type
+        sheets = {
+            'Dashboard Summary': None,
+            'Cash Flow': results['cash_flow'],
+            'Transactions': results['balance_history'],
+            'P2P Transactions': results['balance_history'][results['balance_history']['TradeType'] == 'P2P'],
+            'E-Voucher Transactions': results['balance_history'][results['balance_history']['TradeType'] == 'E-Voucher'],
+            'Profit History': results['profit_history']
+        }
+
+        # Add debug transactions if available
+        if results['debug_transactions'] is not None:
+            sheets['Debug Transactions'] = results['debug_transactions']
+
+        # Create a summary sheet
+        summary_sheet = wb.create_sheet('Dashboard Summary')
+
+        # Add title
+        summary_sheet['A1'] = 'P2P & E-Voucher Transaction Tracker - Summary'
+        summary_sheet['A1'].font = Font(size=14, bold=True)
+        summary_sheet.merge_cells('A1:E1')
+        summary_sheet['A1'].alignment = Alignment(horizontal='center')
+
+        # Add profit information
+        summary_sheet['A3'] = 'Profit Summary'
+        summary_sheet['A3'].font = Font(bold=True)
+
+        summary_sheet['A4'] = 'Total P2P Profit (AED)'
+        summary_sheet['B4'] = f"{results['total_p2p_profit']:.5f}"
+
+        summary_sheet['A5'] = 'Total E-Voucher Profit (AED)'
+        summary_sheet['B5'] = f"{results['total_evoucher_profit']:.5f}"
+
+        summary_sheet['A6'] = 'Total Profit (AED)'
+        summary_sheet['B6'] = f"{(results['total_p2p_profit'] + results['total_evoucher_profit']):.5f}"
+        summary_sheet['B6'].font = Font(bold=True)
+
+        # Add balance information
+        summary_sheet['A8'] = 'Final Balances'
+        summary_sheet['A8'].font = Font(bold=True)
+
+        row = 9
+        for currency, balance in results['final_balances'].items():
+            summary_sheet[f'A{row}'] = f'{currency} Balance'
+            summary_sheet[f'B{row}'] = f"{balance:.5f}"
+            row += 1
+
+        # Add USDT rate and value
+        summary_sheet[f'A{row}'] = 'USDT Rate (AED)'
+        summary_sheet[f'B{row}'] = f"{results['final_usdt_rate']:.5f}"
+        row += 1
+
+        summary_sheet[f'A{row}'] = 'USDT Value (AED)'
+        summary_sheet[f'B{row}'] = f"{results['final_usdt_value']:.5f}"
+        row += 1
+
+        # Add total value
+        total_value_aed = results['final_balances'].get('AED', 0) + results['final_usdt_value']
+        summary_sheet[f'A{row}'] = 'Total Value (AED)'
+        summary_sheet[f'B{row}'] = f"{total_value_aed:.5f}"
+        summary_sheet[f'B{row}'].font = Font(bold=True)
+
+        # Format the summary sheet
+        for col in ['A', 'B']:
+            summary_sheet.column_dimensions[col].width = 25
+
+        # Add data to each sheet
+        for sheet_name, df in sheets.items():
+            if df is not None and not df.empty:
+                # Create sheet
+                ws = wb.create_sheet(sheet_name)
+
+                # Format numeric columns to 5 decimal places
+                numeric_columns = df.select_dtypes(include=['float64', 'int64']).columns
+
+                # Add data from dataframe
+                for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
+                    for c_idx, value in enumerate(row, 1):
+                        # Format numeric values to 5 decimal places
+                        if r_idx > 1 and df.columns[c_idx-1] in numeric_columns:
+                            try:
+                                formatted_value = f"{float(value):.5f}" if value is not None else value
+                                cell = ws.cell(row=r_idx, column=c_idx, value=formatted_value)
+                            except (ValueError, TypeError):
+                                cell = ws.cell(row=r_idx, column=c_idx, value=value)
+                        else:
+                            cell = ws.cell(row=r_idx, column=c_idx, value=value)
+
+                        # Format header row
+                        if r_idx == 1:
+                            cell.font = Font(bold=True)
+                            cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+                # Auto-adjust column width
+                for column in ws.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = (max_length + 2) if max_length < 50 else 50
+                    ws.column_dimensions[column_letter].width = adjusted_width
+
+        # Save the workbook to the BytesIO object
+        wb.save(output)
+        output.seek(0)
+
+        return output
+
+    except Exception as e:
+        st.error(f"Error exporting to Excel: {str(e)}")
+        return None
+
 # Function to analyze E-Voucher transactions
 def analyze_evoucher(df, balance_history):
     evoucher_df = df[df['TradeType'] == 'E-Voucher'].copy()
@@ -611,6 +744,20 @@ def main():
 
             # Dashboard tab
             with tabs[0]:
+                # Add export to Excel button at the top of the dashboard
+                col1, col2 = st.columns([3, 1])
+                with col2:
+                    # Create Excel export button
+                    excel_data = export_to_excel(results)
+                    if excel_data:
+                        st.download_button(
+                            label="📊 Export All Data to Excel",
+                            data=excel_data,
+                            file_name="p2p_tracker_data.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            help="Export all data from all tabs to a single Excel file with multiple sheets"
+                        )
+
                 # Summary metrics - using custom styled cards
                 st.markdown(f"""
                 <div class="profit-card">
