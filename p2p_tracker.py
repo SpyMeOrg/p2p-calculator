@@ -423,6 +423,7 @@ def process_data(file, initial_balances, initial_usdt_rate):
             'initial_usdt_rate': initial_usdt_rate,  # Add initial USDT rate
             'total_p2p_profit': total_p2p_profit,
             'total_evoucher_profit': evoucher_profit,  # Use the separately calculated E-Voucher profit
+            'evoucher_aed_received': evoucher_aed_received,  # Add E-Voucher AED received
             'final_usdt_rate': final_usdt_rate,
             'final_usdt_value': final_usdt_value,
             'debug_transactions': debug_df  # Add debug transactions
@@ -747,10 +748,27 @@ def export_to_excel(results):
         ws.cell(row=row, column=2, value=f"{results['total_p2p_profit']:.5f}")
         row += 1
 
+        # Add E-Voucher details
         ws.cell(row=row, column=1, value="Total E-Voucher Profit")
         ws.cell(row=row, column=2, value=f"{results['total_evoucher_profit']:.5f}")
+
+        # Add E-Voucher breakdown in additional columns
+        ws.cell(row=row, column=3, value="E-Voucher Details:")
+        ws.cell(row=row, column=3).font = Font(italic=True)
         row += 1
 
+        # Add AED received and USDT cost
+        ws.cell(row=row, column=1, value="E-Voucher AED Received")
+        ws.cell(row=row, column=2, value=f"{results.get('evoucher_aed_received', 0):.5f}")
+        row += 1
+
+        ws.cell(row=row, column=1, value="E-Voucher USDT Cost")
+        # Calculate USDT cost: AED received - profit
+        usdt_cost = results.get('evoucher_aed_received', 0) - results['total_evoucher_profit']
+        ws.cell(row=row, column=2, value=f"{usdt_cost:.5f}")
+        row += 1
+
+        # Add total profit
         ws.cell(row=row, column=1, value="Total Profit")
         ws.cell(row=row, column=2, value=f"{(results['total_p2p_profit'] + results['total_evoucher_profit']):.5f}")
         ws.cell(row=row, column=2).font = Font(bold=True)
