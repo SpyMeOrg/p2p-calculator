@@ -391,12 +391,14 @@ def process_data(file, initial_balances, initial_usdt_rate):
 
         # Calculate E-Voucher profit separately
         evoucher_profit = 0
+        evoucher_aed_received = 0  # Initialize evoucher_aed_received
         evoucher_df = df[df['TradeType'] == 'E-Voucher'].copy()
 
         if not evoucher_df.empty:
             # Get all Buy transactions (AED received)
             buy_transactions = evoucher_df[evoucher_df['Type'] == 'Buy']
             total_aed_received = buy_transactions['Real Amount'].sum()
+            evoucher_aed_received = total_aed_received  # Store the total AED received
 
             # Get all Sell transactions (USDT sold)
             sell_transactions = evoucher_df[evoucher_df['Type'] == 'Sell']
