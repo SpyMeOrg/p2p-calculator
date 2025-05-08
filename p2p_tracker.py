@@ -419,6 +419,8 @@ def process_data(file, initial_balances, initial_usdt_rate):
             'profit_history': profit_df,
             'cash_flow': cash_flow_df,
             'final_balances': balances,
+            'initial_balances': initial_balances,  # Add initial balances
+            'initial_usdt_rate': initial_usdt_rate,  # Add initial USDT rate
             'total_p2p_profit': total_p2p_profit,
             'total_evoucher_profit': evoucher_profit,  # Use the separately calculated E-Voucher profit
             'final_usdt_rate': final_usdt_rate,
@@ -502,7 +504,7 @@ def export_to_excel(results):
         import io
         from openpyxl import Workbook
         from openpyxl.utils.dataframe import dataframe_to_rows
-        from openpyxl.styles import Font, Alignment, PatternFill
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
         # Create a BytesIO object to store the Excel file
         output = io.BytesIO()
@@ -510,21 +512,85 @@ def export_to_excel(results):
         # Create a workbook
         wb = Workbook()
 
-        # Remove the default sheet
-        wb.remove(wb.active)
+        # Use the default sheet
+        ws = wb.active
+        ws.title = "P2P Tracker Data"
 
-        # Create sheets for each data type
-        sheets = {
-            'Dashboard Summary': None,
-            'Cash Flow': results['cash_flow'],
-            'Transactions': results['balance_history'],
-            'P2P Transactions': results['balance_history'][results['balance_history']['TradeType'] == 'P2P'],
-            'E-Voucher Transactions': results['balance_history'][results['balance_history']['TradeType'] == 'E-Voucher'],
-            'Profit History': results['profit_history']
-        }
+        # Add title
+        ws['A1'] = 'P2P & E-Voucher Transaction Tracker'
+        ws['A1'].font = Font(size=16, bold=True)
+        ws.merge_cells('A1:J1')
+        ws['A1'].alignment = Alignment(horizontal='center')
 
-        # Add debug transactions if available
-        if results['debug_transactions'] is not None:
+        # Add Cash Flow table
+        row = 3
+        ws[f'A{row}'] = 'CASH FLOW'
+        ws[f'A{row}'].font = Font(size=14, bold=True)
+        ws.merge_cells(f'A{row}:J{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+        row += 2
+        cash_flow_start_row = row
+
+        # Add Cash Flow data
+        if not results['cash_flow'].empty:
+            # Format numeric columns to 5 decimal places
+            cash_flow_df = results['cash_flow'].copy()
+            numeric_columns = cash_flow_df.select_dtypes(include=['float64', 'int64']).columns
+
+            # Add headers
+            for c_idx, col_name in enumerate(cash_flow_df.columns, 1):
+                cell = ws.cell(row=row, column=c_idx, value=col_name)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+                cell.alignment = Alignment(horizontal='center')
+
+            row += 1
+            cash_flow_data_start = row
+
+            # Add data rows
+            for _, data_row in cash_flow_df.iterrows():
+                for c_idx, (col_name, value) in enumerate(zip(cash_flow_df.columns, data_row), 1):
+                    # Handle complex data types
+                    if isinstance(value, (list, tuple, dict)):
+                        value = str(value)
+
+                    # Format numeric values
+                    if col_name in numeric_columns:
+                        try:
+                            formatted_value = f"{float(value):.5f}" if value is not None else value
+                            cell = ws.cell(row=row, column=c_idx, value=formatted_value)
+                        except (ValueError, TypeError):
+                            cell = ws.cell(row=row, column=c_idx, value=value)
+                    else:
+                        cell = ws.cell(row=row, column=c_idx, value=value)
+
+                row += 1
+
+            cash_flow_end_row = row - 1
+
+            # Add border to the table
+            thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
+                                top=Side(style='thin'), bottom=Side(style='thin'))
+
+            for r in range(cash_flow_data_start - 1, cash_flow_end_row + 1):
+                for c in range(1, len(cash_flow_df.columns) + 1):
+                    ws.cell(row=r, column=c).border = thin_border
+
+        # Add Debug Transactions table
+        row += 3
+        ws[f'A{row}'] = 'DEBUG TRANSACTIONS'
+        ws[f'A{row}'].font = Font(size=14, bold=True)
+        ws.merge_cells(f'A{row}:J{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+        row += 2
+        debug_start_row = row
+
+        # Add Debug Transactions data if available
+        if results['debug_transactions'] is not None and not results['debug_transactions'].empty:
             # Create a copy of debug transactions and convert complex columns to string
             debug_df = results['debug_transactions'].copy()
 
@@ -539,103 +605,175 @@ def export_to_excel(results):
                 if debug_df[col].apply(lambda x: isinstance(x, (list, dict, tuple))).any():
                     debug_df[col] = debug_df[col].apply(lambda x: str(x))
 
-            sheets['Debug Transactions'] = debug_df
+            # Format numeric columns
+            numeric_columns = debug_df.select_dtypes(include=['float64', 'int64']).columns
 
-        # Create a summary sheet
-        summary_sheet = wb.create_sheet('Dashboard Summary')
+            # Add headers
+            for c_idx, col_name in enumerate(debug_df.columns, 1):
+                cell = ws.cell(row=row, column=c_idx, value=col_name)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+                cell.alignment = Alignment(horizontal='center')
 
-        # Add title
-        summary_sheet['A1'] = 'P2P & E-Voucher Transaction Tracker - Summary'
-        summary_sheet['A1'].font = Font(size=14, bold=True)
-        summary_sheet.merge_cells('A1:E1')
-        summary_sheet['A1'].alignment = Alignment(horizontal='center')
+            row += 1
+            debug_data_start = row
 
-        # Add profit information
-        summary_sheet['A3'] = 'Profit Summary'
-        summary_sheet['A3'].font = Font(bold=True)
+            # Add data rows
+            for _, data_row in debug_df.iterrows():
+                for c_idx, (col_name, value) in enumerate(zip(debug_df.columns, data_row), 1):
+                    # Format numeric values
+                    if col_name in numeric_columns:
+                        try:
+                            formatted_value = f"{float(value):.5f}" if value is not None else value
+                            cell = ws.cell(row=row, column=c_idx, value=formatted_value)
+                        except (ValueError, TypeError):
+                            cell = ws.cell(row=row, column=c_idx, value=value)
+                    else:
+                        cell = ws.cell(row=row, column=c_idx, value=value)
 
-        summary_sheet['A4'] = 'Total P2P Profit (AED)'
-        summary_sheet['B4'] = f"{results['total_p2p_profit']:.5f}"
+                row += 1
 
-        summary_sheet['A5'] = 'Total E-Voucher Profit (AED)'
-        summary_sheet['B5'] = f"{results['total_evoucher_profit']:.5f}"
+            debug_end_row = row - 1
 
-        summary_sheet['A6'] = 'Total Profit (AED)'
-        summary_sheet['B6'] = f"{(results['total_p2p_profit'] + results['total_evoucher_profit']):.5f}"
-        summary_sheet['B6'].font = Font(bold=True)
+            # Add border to the table
+            for r in range(debug_data_start - 1, debug_end_row + 1):
+                for c in range(1, len(debug_df.columns) + 1):
+                    ws.cell(row=r, column=c).border = thin_border
 
-        # Add balance information
-        summary_sheet['A8'] = 'Final Balances'
-        summary_sheet['A8'].font = Font(bold=True)
+        # Add Initial Balances section
+        row += 3
+        ws[f'A{row}'] = 'INITIAL BALANCES'
+        ws[f'A{row}'].font = Font(size=14, bold=True)
+        ws.merge_cells(f'A{row}:C{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
-        row = 9
+        row += 2
+
+        # Add headers for initial balances
+        ws.cell(row=row, column=1, value="Currency").font = Font(bold=True)
+        ws.cell(row=row, column=2, value="Initial Balance").font = Font(bold=True)
+        ws.cell(row=row, column=1).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        ws.cell(row=row, column=2).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+        row += 1
+        initial_balances_start = row
+
+        # Add initial balances data
+        for currency, balance in results.get('initial_balances', {}).items():
+            ws.cell(row=row, column=1, value=currency)
+            ws.cell(row=row, column=2, value=f"{float(balance):.5f}")
+            row += 1
+
+        # Add initial USDT rate
+        ws.cell(row=row, column=1, value="Initial USDT Rate (AED)")
+        ws.cell(row=row, column=2, value=f"{results.get('initial_usdt_rate', 0):.5f}")
+
+        initial_balances_end = row
+
+        # Add border to the initial balances table
+        for r in range(initial_balances_start - 1, initial_balances_end + 1):
+            for c in range(1, 3):
+                ws.cell(row=r, column=c).border = thin_border
+
+        # Add Final Balances section
+        row += 3
+        ws[f'A{row}'] = 'FINAL BALANCES'
+        ws[f'A{row}'].font = Font(size=14, bold=True)
+        ws.merge_cells(f'A{row}:C{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+        row += 2
+
+        # Add headers for final balances
+        ws.cell(row=row, column=1, value="Currency").font = Font(bold=True)
+        ws.cell(row=row, column=2, value="Final Balance").font = Font(bold=True)
+        ws.cell(row=row, column=1).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        ws.cell(row=row, column=2).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+        row += 1
+        final_balances_start = row
+
+        # Add final balances data
         for currency, balance in results['final_balances'].items():
-            summary_sheet[f'A{row}'] = f'{currency} Balance'
-            summary_sheet[f'B{row}'] = f"{balance:.5f}"
+            ws.cell(row=row, column=1, value=currency)
+            ws.cell(row=row, column=2, value=f"{balance:.5f}")
             row += 1
 
         # Add USDT rate and value
-        summary_sheet[f'A{row}'] = 'USDT Rate (AED)'
-        summary_sheet[f'B{row}'] = f"{results['final_usdt_rate']:.5f}"
+        ws.cell(row=row, column=1, value="USDT Rate (AED)")
+        ws.cell(row=row, column=2, value=f"{results['final_usdt_rate']:.5f}")
         row += 1
 
-        summary_sheet[f'A{row}'] = 'USDT Value (AED)'
-        summary_sheet[f'B{row}'] = f"{results['final_usdt_value']:.5f}"
+        ws.cell(row=row, column=1, value="USDT Value (AED)")
+        ws.cell(row=row, column=2, value=f"{results['final_usdt_value']:.5f}")
         row += 1
 
         # Add total value
         total_value_aed = results['final_balances'].get('AED', 0) + results['final_usdt_value']
-        summary_sheet[f'A{row}'] = 'Total Value (AED)'
-        summary_sheet[f'B{row}'] = f"{total_value_aed:.5f}"
-        summary_sheet[f'B{row}'].font = Font(bold=True)
+        ws.cell(row=row, column=1, value="Total Value (AED)")
+        ws.cell(row=row, column=2, value=f"{total_value_aed:.5f}")
+        ws.cell(row=row, column=2).font = Font(bold=True)
 
-        # Format the summary sheet
-        for col in ['A', 'B']:
-            summary_sheet.column_dimensions[col].width = 25
+        final_balances_end = row
 
-        # Add data to each sheet
-        for sheet_name, df in sheets.items():
-            if df is not None and not df.empty:
-                # Create sheet
-                ws = wb.create_sheet(sheet_name)
+        # Add border to the final balances table
+        for r in range(final_balances_start - 1, final_balances_end + 1):
+            for c in range(1, 3):
+                ws.cell(row=r, column=c).border = thin_border
 
-                # Format numeric columns to 5 decimal places
-                numeric_columns = df.select_dtypes(include=['float64', 'int64']).columns
+        # Add Profit Summary section
+        row += 3
+        ws[f'A{row}'] = 'PROFIT SUMMARY'
+        ws[f'A{row}'].font = Font(size=14, bold=True)
+        ws.merge_cells(f'A{row}:C{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
-                # Add data from dataframe
-                for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
-                    for c_idx, value in enumerate(row, 1):
-                        # Handle complex data types (lists, tuples, dicts)
-                        if isinstance(value, (list, tuple, dict)):
-                            value = str(value)
+        row += 2
 
-                        # Format numeric values to 5 decimal places
-                        if r_idx > 1 and df.columns[c_idx-1] in numeric_columns:
-                            try:
-                                formatted_value = f"{float(value):.5f}" if value is not None else value
-                                cell = ws.cell(row=r_idx, column=c_idx, value=formatted_value)
-                            except (ValueError, TypeError):
-                                cell = ws.cell(row=r_idx, column=c_idx, value=value)
-                        else:
-                            cell = ws.cell(row=r_idx, column=c_idx, value=value)
+        # Add headers for profit summary
+        ws.cell(row=row, column=1, value="Profit Type").font = Font(bold=True)
+        ws.cell(row=row, column=2, value="Amount (AED)").font = Font(bold=True)
+        ws.cell(row=row, column=1).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        ws.cell(row=row, column=2).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
-                        # Format header row
-                        if r_idx == 1:
-                            cell.font = Font(bold=True)
-                            cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        row += 1
+        profit_start = row
 
-                # Auto-adjust column width
-                for column in ws.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = (max_length + 2) if max_length < 50 else 50
-                    ws.column_dimensions[column_letter].width = adjusted_width
+        # Add profit data
+        ws.cell(row=row, column=1, value="Total P2P Profit")
+        ws.cell(row=row, column=2, value=f"{results['total_p2p_profit']:.5f}")
+        row += 1
+
+        ws.cell(row=row, column=1, value="Total E-Voucher Profit")
+        ws.cell(row=row, column=2, value=f"{results['total_evoucher_profit']:.5f}")
+        row += 1
+
+        ws.cell(row=row, column=1, value="Total Profit")
+        ws.cell(row=row, column=2, value=f"{(results['total_p2p_profit'] + results['total_evoucher_profit']):.5f}")
+        ws.cell(row=row, column=2).font = Font(bold=True)
+
+        profit_end = row
+
+        # Add border to the profit summary table
+        for r in range(profit_start - 1, profit_end + 1):
+            for c in range(1, 3):
+                ws.cell(row=r, column=c).border = thin_border
+
+        # Auto-adjust column width for all columns
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2) if max_length < 50 else 50
+            ws.column_dimensions[column_letter].width = adjusted_width
 
         # Save the workbook to the BytesIO object
         wb.save(output)
