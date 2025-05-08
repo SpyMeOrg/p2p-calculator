@@ -502,7 +502,7 @@ def create_profit_chart(profit_df):
     return fig
 
 # Function to export all data to Excel
-def export_to_excel(results):
+def export_to_excel(results, manual_aed_received=0):
     try:
         import io
         from openpyxl import Workbook
@@ -760,13 +760,18 @@ def export_to_excel(results):
         row += 1
 
         # Add AED received and USDT cost
+        # Use the manually entered value if available, otherwise use the calculated value
+        aed_received = manual_aed_received if manual_aed_received > 0 else results.get('evoucher_aed_received', 0)
+
         ws.cell(row=row, column=1, value="E-Voucher AED Received")
-        ws.cell(row=row, column=2, value=f"{results.get('evoucher_aed_received', 0):.5f}")
+        ws.cell(row=row, column=2, value=f"{aed_received:.5f}")
+        if manual_aed_received > 0:
+            ws.cell(row=row, column=3, value="(Manual Entry)")
         row += 1
 
         ws.cell(row=row, column=1, value="E-Voucher USDT Cost")
         # Calculate USDT cost: AED received - profit
-        usdt_cost = results.get('evoucher_aed_received', 0) - results['total_evoucher_profit']
+        usdt_cost = aed_received - results['total_evoucher_profit']
         ws.cell(row=row, column=2, value=f"{usdt_cost:.5f}")
         row += 1
 
@@ -1062,7 +1067,7 @@ def main():
                 col1, col2 = st.columns([3, 1])
                 with col2:
                     # Create Excel export button
-                    excel_data = export_to_excel(results)
+                    excel_data = export_to_excel(results, evoucher_aed_received)
                     if excel_data:
                         st.download_button(
                             label="📊 Export All Data to Excel",
