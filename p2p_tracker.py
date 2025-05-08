@@ -220,6 +220,9 @@ def process_data(file, initial_balances, initial_usdt_rate):
                     total_sell_value = sell_price_in_aed * usdt_amount
                     total_cost_value = 0
 
+                    # Track original purchase rate for this sell transaction
+                    original_purchase_rate = 0
+
                     # Track USDT used for detailed calculation
                     usdt_used_details = []
 
@@ -252,9 +255,14 @@ def process_data(file, initial_balances, initial_usdt_rate):
                     # Calculate profit as the difference between sell value and cost
                     transaction_profit = total_sell_value - total_cost_value
 
+                    # Calculate original purchase rate (weighted average of used USDT)
+                    if usdt_amount > 0:
+                        original_purchase_rate = total_cost_value / usdt_amount
+
                     # Add detailed calculation to debug info
                     debug_info.append(f"Sell value: {usdt_amount} USDT @ {sell_price_in_aed} = {total_sell_value} AED")
                     debug_info.append(f"Cost value: {total_cost_value} AED")
+                    debug_info.append(f"Original purchase rate: {original_purchase_rate} AED")
                     debug_info.append(f"Profit: {transaction_profit} AED")
 
                     # Store debug info for this transaction
@@ -269,6 +277,7 @@ def process_data(file, initial_balances, initial_usdt_rate):
                         'total_sell_value': total_sell_value,
                         'usdt_used': usdt_used_details,
                         'total_cost_value': total_cost_value,
+                        'original_purchase_rate': original_purchase_rate,
                         'profit': transaction_profit,
                         'debug_info': debug_info
                     })
@@ -356,6 +365,10 @@ def process_data(file, initial_balances, initial_usdt_rate):
                 'Transaction Profit': transaction_profit if trade_type == 'P2P' else 0,  # Only show profit for P2P transactions
                 'Cumulative P2P Profit': total_p2p_profit
             }
+
+            # Add original purchase rate for sell transactions
+            if transaction_type == 'Sell' and trade_type == 'P2P':
+                cash_flow_record['Original Purchase Rate'] = original_purchase_rate
             cash_flow.append(cash_flow_record)
 
         # Create DataFrame from balance history
@@ -850,6 +863,7 @@ def main():
                                 st.write(f"- Batch {j+1}: {amount:.15f} USDT @ {price:.15f} AED = {amount * price:.15f} AED")
 
                             st.write(f"**Total Cost Value:** {row['total_cost_value']:.15f} AED")
+                            st.write(f"**Original Purchase Rate:** {row['original_purchase_rate']:.15f} AED")
                             st.write(f"**Profit:** {row['profit']:.15f} AED")
 
                             st.write("**Calculation Details:**")
