@@ -523,7 +523,21 @@ def export_to_excel(results):
 
         # Add debug transactions if available
         if results['debug_transactions'] is not None:
-            sheets['Debug Transactions'] = results['debug_transactions']
+            # Create a copy of debug transactions and convert complex columns to string
+            debug_df = results['debug_transactions'].copy()
+
+            # Convert usdt_used column to string representation
+            if 'usdt_used' in debug_df.columns:
+                debug_df['usdt_used'] = debug_df['usdt_used'].apply(
+                    lambda x: str([f"{amount:.5f} USDT @ {price:.5f}" for amount, price in x]) if isinstance(x, list) else str(x)
+                )
+
+            # Convert any other complex columns to string
+            for col in debug_df.columns:
+                if debug_df[col].apply(lambda x: isinstance(x, (list, dict, tuple))).any():
+                    debug_df[col] = debug_df[col].apply(lambda x: str(x))
+
+            sheets['Debug Transactions'] = debug_df
 
         # Create a summary sheet
         summary_sheet = wb.create_sheet('Dashboard Summary')
@@ -589,6 +603,10 @@ def export_to_excel(results):
                 # Add data from dataframe
                 for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
                     for c_idx, value in enumerate(row, 1):
+                        # Handle complex data types (lists, tuples, dicts)
+                        if isinstance(value, (list, tuple, dict)):
+                            value = str(value)
+
                         # Format numeric values to 5 decimal places
                         if r_idx > 1 and df.columns[c_idx-1] in numeric_columns:
                             try:
