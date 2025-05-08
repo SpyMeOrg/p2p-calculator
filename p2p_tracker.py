@@ -762,29 +762,18 @@ def export_to_excel(results):
             for c in range(1, 3):
                 ws.cell(row=r, column=c).border = thin_border
 
-        # Auto-adjust column width for all columns
-        for column_idx in range(1, ws.max_column + 1):
-            max_length = 0
-            column_letter = None
+        # Set fixed column widths instead of auto-adjusting
+        # This avoids issues with merged cells
+        from openpyxl.utils import get_column_letter
 
-            # Get column letter
-            for cell in ws[1]:
-                if cell.column == column_idx:
-                    column_letter = cell.column_letter
-                    break
+        # Set default width for all columns
+        for i in range(1, 20):  # Assuming we won't have more than 20 columns
+            column_letter = get_column_letter(i)
+            ws.column_dimensions[column_letter].width = 15
 
-            if column_letter:
-                # Find max length in the column
-                for row_idx in range(1, ws.max_row + 1):
-                    cell = ws.cell(row=row_idx, column=column_idx)
-                    try:
-                        if cell.value and len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-
-                adjusted_width = (max_length + 2) if max_length < 50 else 50
-                ws.column_dimensions[column_letter].width = adjusted_width
+        # Set specific widths for certain columns
+        ws.column_dimensions['A'].width = 20  # First column (usually dates or descriptions)
+        ws.column_dimensions['B'].width = 20  # Second column
 
         # Save the workbook to the BytesIO object
         wb.save(output)
