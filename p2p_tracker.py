@@ -763,17 +763,28 @@ def export_to_excel(results):
                 ws.cell(row=r, column=c).border = thin_border
 
         # Auto-adjust column width for all columns
-        for column in ws.columns:
+        for column_idx in range(1, ws.max_column + 1):
             max_length = 0
-            column_letter = column[0].column_letter
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = (max_length + 2) if max_length < 50 else 50
-            ws.column_dimensions[column_letter].width = adjusted_width
+            column_letter = None
+
+            # Get column letter
+            for cell in ws[1]:
+                if cell.column == column_idx:
+                    column_letter = cell.column_letter
+                    break
+
+            if column_letter:
+                # Find max length in the column
+                for row_idx in range(1, ws.max_row + 1):
+                    cell = ws.cell(row=row_idx, column=column_idx)
+                    try:
+                        if cell.value and len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+
+                adjusted_width = (max_length + 2) if max_length < 50 else 50
+                ws.column_dimensions[column_letter].width = adjusted_width
 
         # Save the workbook to the BytesIO object
         wb.save(output)
