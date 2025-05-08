@@ -4,6 +4,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import numpy as np
+import json
+import os
 
 # Set page config
 st.set_page_config(
@@ -697,39 +699,175 @@ def analyze_evoucher(df, balance_history):
 
     return summary, rate_fig, evoucher_profit
 
+# Function to save settings to a JSON file
+def save_settings(settings):
+    try:
+        with open('p2p_settings.json', 'w') as f:
+            json.dump(settings, f)
+        return True
+    except Exception as e:
+        st.error(f"Error saving settings: {str(e)}")
+        return False
+
+# Function to load settings from a JSON file
+def load_settings():
+    try:
+        if os.path.exists('p2p_settings.json'):
+            with open('p2p_settings.json', 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        st.error(f"Error loading settings: {str(e)}")
+    return {}
+
 # Main application
 def main():
+    # Initialize session state for settings if not already done
+    if 'settings_loaded' not in st.session_state:
+        st.session_state.settings_loaded = True
+        # Load saved settings
+        saved_settings = load_settings()
+
+        # Initialize session state with saved settings or defaults
+        if 'initial_balances' not in st.session_state:
+            st.session_state.initial_balances = saved_settings.get('initial_balances', {})
+        if 'initial_usdt_rate' not in st.session_state:
+            st.session_state.initial_usdt_rate = saved_settings.get('initial_usdt_rate', 3.67)
+        if 'evoucher_aed_received' not in st.session_state:
+            st.session_state.evoucher_aed_received = saved_settings.get('evoucher_aed_received', 0.0)
+        if 'additional_currencies' not in st.session_state:
+            st.session_state.additional_currencies = saved_settings.get('additional_currencies', [])
+
     # Sidebar for initial balances
     st.sidebar.subheader("Enter Initial Balances")
 
     # Default currencies
     default_currencies = ['AED', 'EGP', 'USDT']
 
+    # Ensure default currencies exist in session state
+    for currency in default_currencies:
+        if currency not in st.session_state.initial_balances:
+            st.session_state.initial_balances[currency] = 0.0
+
     # Initial balances
     initial_balances = {}
     for currency in default_currencies:
-        initial_balances[currency] = st.sidebar.number_input(f"Initial {currency} Balance", value=0.0, step=0.01, format="%.15f")
+        initial_balances[currency] = st.sidebar.number_input(
+            f"Initial {currency} Balance",
+            value=st.session_state.initial_balances.get(currency, 0.0),
+            step=0.01,
+            format="%.15f",
+            key=f"balance_{currency}"
+        )
+        # Update session state when value changes
+        st.session_state.initial_balances[currency] = initial_balances[currency]
 
     # Initial USDT rate
     st.sidebar.subheader("Initial USDT Rate")
-    initial_usdt_rate = st.sidebar.number_input("Initial USDT Rate (AED)", value=3.67, step=0.01, format="%.15f",
-                                               help="This is the rate at which your initial USDT balance was acquired")
+    initial_usdt_rate = st.sidebar.number_input(
+        "Initial USDT Rate (AED)",
+        value=st.session_state.initial_usdt_rate,
+        step=0.01,
+        format="%.15f",
+        help="This is the rate at which your initial USDT balance was acquired",
+        key="usdt_rate"
+    )
+    # Update session state
+    st.session_state.initial_usdt_rate = initial_usdt_rate
 
     # E-Voucher AED received
     st.sidebar.subheader("E-Voucher Settings")
-    evoucher_aed_received = st.sidebar.number_input("Total AED Received from Workers", value=0.0, step=100.0, format="%.15f",
-                                                  help="Enter the total AED amount received from workers for E-Voucher transactions")
+    evoucher_aed_received = st.sidebar.number_input(
+        "Total AED Received from Workers",
+        value=st.session_state.evoucher_aed_received,
+        step=100.0,
+        format="%.15f",
+        help="Enter the total AED amount received from workers for E-Voucher transactions",
+        key="evoucher_aed"
+    )
+    # Update session state
+    st.session_state.evoucher_aed_received = evoucher_aed_received
 
     # Option to add more currencies
     st.sidebar.subheader("Add Additional Currency")
-    new_currency = st.sidebar.text_input("Currency Code (e.g., USD)")
+    new_currency = st.sidebar.text_input("Currency Code (e.g., USD)", key="new_currency")
 
+    # Add additional currencies from session state
+    for currency in st.session_state.additional_currencies:
+        if currency not in initial_balances and currency not in default_currencies:
+            initial_balances[currency] = st.sidebar.number_input(
+                f"Initial {currency} Balance",
+                value=st.session_state.initial_balances.get(currency, 0.0),
+                step=0.01,
+                format="%.15f",
+                key=f"balance_{currency}"
+            )
+            # Update session state
+            st.session_state.initial_balances[currency] = initial_balances[currency]
+
+    # Add new currency if entered
     if new_currency and new_currency not in initial_balances:
-        initial_balances[new_currency] = st.sidebar.number_input(f"Initial {new_currency} Balance", value=0.0, step=0.01, format="%.15f")
+        initial_balances[new_currency] = st.sidebar.number_input(
+            f"Initial {new_currency} Balance",
+            value=0.0,
+            step=0.01,
+            format="%.15f",
+            key=f"balance_{new_currency}"
+        )
+        # Update session state
+        st.session_state.initial_balances[new_currency] = initial_balances[new_currency]
+        if new_currency not in st.session_state.additional_currencies:
+            st.session_state.additional_currencies.append(new_currency)
+
+    # Save button for settings
+    if st.sidebar.button("💾 Save Settings", help="Save current settings for future sessions"):
+        settings = {
+            'initial_balances': st.session_state.initial_balances,
+            'initial_usdt_rate': st.session_state.initial_usdt_rate,
+            'evoucher_aed_received': st.session_state.evoucher_aed_received,
+            'additional_currencies': st.session_state.additional_currencies
+        }
+        if save_settings(settings):
+            st.sidebar.success("Settings saved successfully!")
+        else:
+            st.sidebar.error("Failed to save settings.")
 
     # File uploader
     st.sidebar.subheader("Upload Transaction File")
-    uploaded_file = st.sidebar.file_uploader("Choose an Excel file", type=["xlsx", "csv"])
+
+    # Initialize last_file_path in session state if not present
+    if 'last_file_path' not in st.session_state:
+        st.session_state.last_file_path = saved_settings.get('last_file_path', '')
+
+    # Show last used file path if available
+    if st.session_state.last_file_path:
+        st.sidebar.info(f"Last used file: {os.path.basename(st.session_state.last_file_path)}")
+
+        # Option to use the last file
+        if os.path.exists(st.session_state.last_file_path) and st.sidebar.button("📂 Use Last File"):
+            uploaded_file = open(st.session_state.last_file_path, "rb")
+        else:
+            uploaded_file = st.sidebar.file_uploader("Choose an Excel file", type=["xlsx", "csv"])
+    else:
+        uploaded_file = st.sidebar.file_uploader("Choose an Excel file", type=["xlsx", "csv"])
+
+    # Save file path if a file is uploaded
+    if uploaded_file is not None and hasattr(uploaded_file, 'name'):
+        try:
+            # Try to get the file path
+            file_path = uploaded_file.name
+            if os.path.exists(file_path):
+                st.session_state.last_file_path = file_path
+                # Update settings
+                settings = {
+                    'initial_balances': st.session_state.initial_balances,
+                    'initial_usdt_rate': st.session_state.initial_usdt_rate,
+                    'evoucher_aed_received': st.session_state.evoucher_aed_received,
+                    'additional_currencies': st.session_state.additional_currencies,
+                    'last_file_path': file_path
+                }
+                save_settings(settings)
+        except:
+            pass  # Ignore if we can't get the file path
 
     if uploaded_file is not None:
         # Process data
