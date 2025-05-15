@@ -6,6 +6,13 @@ from datetime import datetime
 import numpy as np
 import json
 import os
+import io
+import glob
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+import openpyxl.cell.cell
 
 # Set page config
 st.set_page_config(
@@ -509,6 +516,10 @@ def export_to_excel(results, manual_aed_received=0):
         from openpyxl.utils.dataframe import dataframe_to_rows
         from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
+        # Define border style for tables
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
+                            top=Side(style='thin'), bottom=Side(style='thin'))
+
         # Create a BytesIO object to store the Excel file
         output = io.BytesIO()
 
@@ -519,31 +530,156 @@ def export_to_excel(results, manual_aed_received=0):
         ws = wb.active
         ws.title = "P2P Tracker Data"
 
-        # Add title
-        ws['A1'] = 'P2P & E-Voucher Transaction Tracker'
-        ws['A1'].font = Font(size=16, bold=True)
-        ws.merge_cells('A1:J1')
+        # Define border style for tables
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
+                            top=Side(style='thin'), bottom=Side(style='thin'))
+
+        # Get transaction date for the title
+        transaction_date = "No Data"
+        if not results['cash_flow'].empty:
+            try:
+                # Get only the first date of transactions
+                first_date = results['cash_flow']['Date'].iloc[0] if 'Date' in results['cash_flow'].columns else ""
+
+                # Make sure date is string
+                first_date = str(first_date)
+
+                # Use just the date part for the title
+                transaction_date = first_date
+
+            except Exception as e:
+                # If there's any error, use a default
+                from datetime import datetime
+                today = datetime.now().strftime("%Y-%m-%d")
+                transaction_date = today
+                print(f"Could not format date for title: {str(e)}")
+
+        # Get total profit for title
+        total_profit = results['total_p2p_profit'] + results['total_evoucher_profit']
+
+        # Add professional title with date and profit
+        ws['A1'] = f'P2P & E-Voucher Financial Report - {transaction_date}'
+        ws['A1'].font = Font(size=12, bold=True)
+        ws.merge_cells('A1:G1')
         ws['A1'].alignment = Alignment(horizontal='center')
 
-        # Add Cash Flow table
-        row = 3
-        ws[f'A{row}'] = 'CASH FLOW'
-        ws[f'A{row}'].font = Font(size=14, bold=True)
-        ws.merge_cells(f'A{row}:J{row}')
+        # Add subtitle with profit information
+        row = 2
+        ws[f'A{row}'] = f'Total Profit: {total_profit:.2f} AED'
+        ws[f'A{row}'].font = Font(size=10, bold=True)
+        ws.merge_cells(f'A{row}:G{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+
+        # Increment row for next section
+        row += 1
+
+        # Add Initial Balances section first
+        ws[f'A{row}'] = 'INITIAL BALANCES'
+        ws[f'A{row}'].font = Font(size=10, bold=True)
+        ws.merge_cells(f'A{row}:C{row}')
         ws[f'A{row}'].alignment = Alignment(horizontal='center')
         ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
-        row += 2
-        cash_flow_start_row = row
+        # Add subtitle explaining the table
+        row += 1
+        ws[f'A{row}'] = 'Opening balances and rates at the beginning of the period'
+        ws[f'A{row}'].font = Font(size=8, italic=True)
+        ws.merge_cells(f'A{row}:C{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+
+        row += 1  # Reduce space
+
+        # Add headers for initial balances
+        ws.cell(row=row, column=1, value="Currency").font = Font(bold=True)
+        ws.cell(row=row, column=2, value="Initial Balance").font = Font(bold=True)
+        ws.cell(row=row, column=3, value="Value (AED)").font = Font(bold=True)
+        ws.cell(row=row, column=1).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        ws.cell(row=row, column=2).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        ws.cell(row=row, column=3).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+        row += 1
+        initial_balances_start = row
+
+        # Add initial balances data
+        aed_balance = 0
+        usdt_balance = 0
+        usdt_in_aed = 0
+
+        for currency, balance in results.get('initial_balances', {}).items():
+            ws.cell(row=row, column=1, value=currency)
+            ws.cell(row=row, column=2, value=f"{float(balance):.5f}")
+
+            # Calculate AED value
+            if currency == 'AED':
+                aed_value = balance
+                aed_balance = aed_value
+                ws.cell(row=row, column=3, value=f"{aed_value:.5f}")
+            elif currency == 'USDT':
+                usdt_balance = balance
+                usdt_rate = results.get('initial_usdt_rate', 0)
+                usdt_in_aed = balance * usdt_rate
+                ws.cell(row=row, column=3, value=f"{usdt_in_aed:.5f}")
+            else:
+                ws.cell(row=row, column=3, value="-")
+
+            row += 1
+
+        # Add initial USDT rate
+        ws.cell(row=row, column=1, value="Initial USDT Rate (AED)")
+        ws.cell(row=row, column=2, value=f"{results.get('initial_usdt_rate', 0):.5f}")
+        ws.cell(row=row, column=3, value="-")
+        row += 1
+
+        # Add total AED value row
+        total_initial_aed = aed_balance + usdt_in_aed
+        ws.cell(row=row, column=1, value="Total Value (AED)")
+        ws.cell(row=row, column=2, value="-")
+        ws.cell(row=row, column=3, value=f"{total_initial_aed:.5f}")
+        ws.cell(row=row, column=3).font = Font(bold=True)
+
+        initial_balances_end = row
+
+        # Add border to the initial balances table
+        for r in range(initial_balances_start - 1, initial_balances_end + 1):
+            for c in range(1, 4):  # Extended to include the AED value column
+                ws.cell(row=r, column=c).border = thin_border
+
+        # Then add Cash Flow table
+        row += 2  # Add space
+        ws[f'A{row}'] = 'CASH FLOW'
+        ws[f'A{row}'].font = Font(size=10, bold=True)
+        ws.merge_cells(f'A{row}:G{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+        # Add subtitle explaining the table
+        row += 1
+        ws[f'A{row}'] = 'Summary of all transactions showing balances and values after each transaction'
+        ws[f'A{row}'].font = Font(size=8, italic=True)
+        ws.merge_cells(f'A{row}:G{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+
+        row += 1  # Reduce space
 
         # Add Cash Flow data
         if not results['cash_flow'].empty:
-            # Format numeric columns to 5 decimal places
+            # Create a simplified version of cash flow for better printing
             cash_flow_df = results['cash_flow'].copy()
-            numeric_columns = cash_flow_df.select_dtypes(include=['float64', 'int64']).columns
+
+            # Select only the most important columns for printing
+            important_columns = ['Date', 'Transaction', 'AED Balance', 'USDT Balance', 'USDT Rate', 'Total Value (AED)', 'Transaction Profit']
+
+            # Filter columns that exist in the dataframe
+            print_columns = [col for col in important_columns if col in cash_flow_df.columns]
+
+            # Create a simplified dataframe
+            simplified_cf = cash_flow_df[print_columns].copy()
+
+            # Format numeric columns to 2 decimal places for better readability
+            numeric_columns = simplified_cf.select_dtypes(include=['float64', 'int64']).columns
 
             # Add headers
-            for c_idx, col_name in enumerate(cash_flow_df.columns, 1):
+            for c_idx, col_name in enumerate(simplified_cf.columns, 1):
                 cell = ws.cell(row=row, column=c_idx, value=col_name)
                 cell.font = Font(bold=True)
                 cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
@@ -553,13 +689,13 @@ def export_to_excel(results, manual_aed_received=0):
             cash_flow_data_start = row
 
             # Add data rows
-            for _, data_row in cash_flow_df.iterrows():
-                for c_idx, (col_name, value) in enumerate(zip(cash_flow_df.columns, data_row), 1):
+            for _, data_row in simplified_cf.iterrows():
+                for c_idx, (col_name, value) in enumerate(zip(simplified_cf.columns, data_row), 1):
                     # Handle complex data types
                     if isinstance(value, (list, tuple, dict)):
                         value = str(value)
 
-                    # Format numeric values
+                    # Format numeric values with 5 decimal places for higher precision
                     if col_name in numeric_columns:
                         try:
                             formatted_value = f"{float(value):.5f}" if value is not None else value
@@ -568,173 +704,140 @@ def export_to_excel(results, manual_aed_received=0):
                             cell = ws.cell(row=row, column=c_idx, value=value)
                     else:
                         cell = ws.cell(row=row, column=c_idx, value=value)
+
+                    # Set alignment and wrap text for Transaction column
+                    if col_name == 'Date':
+                        cell.alignment = Alignment(horizontal='left')
+                    elif col_name == 'Transaction':
+                        # Format transaction text to be more readable
+                        if isinstance(value, str) and len(value) > 15:
+                            # Insert line breaks for common transaction types
+                            value = value.replace(" - ", "\n")
+                            value = value.replace(" @ ", "\n@ ")
+
+                        cell.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+                        cell.value = value
+                        # Set row height to accommodate wrapped text
+                        if isinstance(value, str) and "\n" in value:
+                            lines = value.count("\n") + 1
+                            ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 15, 15 * lines)
+                    else:
+                        cell.alignment = Alignment(horizontal='right')
 
                 row += 1
 
             cash_flow_end_row = row - 1
 
             # Add border to the table
-            thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
-                                top=Side(style='thin'), bottom=Side(style='thin'))
-
             for r in range(cash_flow_data_start - 1, cash_flow_end_row + 1):
-                for c in range(1, len(cash_flow_df.columns) + 1):
+                for c in range(1, len(simplified_cf.columns) + 1):
                     ws.cell(row=r, column=c).border = thin_border
-
-        # Add Debug Transactions table
-        row += 3
-        ws[f'A{row}'] = 'DEBUG TRANSACTIONS'
-        ws[f'A{row}'].font = Font(size=14, bold=True)
-        ws.merge_cells(f'A{row}:J{row}')
-        ws[f'A{row}'].alignment = Alignment(horizontal='center')
-        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
-
-        row += 2
-        debug_start_row = row
-
-        # Add Debug Transactions data if available
-        if results['debug_transactions'] is not None and not results['debug_transactions'].empty:
-            # Create a copy of debug transactions and convert complex columns to string
-            debug_df = results['debug_transactions'].copy()
-
-            # Convert usdt_used column to string representation
-            if 'usdt_used' in debug_df.columns:
-                debug_df['usdt_used'] = debug_df['usdt_used'].apply(
-                    lambda x: str([f"{amount:.5f} USDT @ {price:.5f}" for amount, price in x]) if isinstance(x, list) else str(x)
-                )
-
-            # Convert any other complex columns to string
-            for col in debug_df.columns:
-                if debug_df[col].apply(lambda x: isinstance(x, (list, dict, tuple))).any():
-                    debug_df[col] = debug_df[col].apply(lambda x: str(x))
-
-            # Format numeric columns
-            numeric_columns = debug_df.select_dtypes(include=['float64', 'int64']).columns
-
-            # Add headers
-            for c_idx, col_name in enumerate(debug_df.columns, 1):
-                cell = ws.cell(row=row, column=c_idx, value=col_name)
-                cell.font = Font(bold=True)
-                cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
-                cell.alignment = Alignment(horizontal='center')
-
-            row += 1
-            debug_data_start = row
-
-            # Add data rows
-            for _, data_row in debug_df.iterrows():
-                for c_idx, (col_name, value) in enumerate(zip(debug_df.columns, data_row), 1):
-                    # Format numeric values
-                    if col_name in numeric_columns:
-                        try:
-                            formatted_value = f"{float(value):.5f}" if value is not None else value
-                            cell = ws.cell(row=row, column=c_idx, value=formatted_value)
-                        except (ValueError, TypeError):
-                            cell = ws.cell(row=row, column=c_idx, value=value)
-                    else:
-                        cell = ws.cell(row=row, column=c_idx, value=value)
-
-                row += 1
-
-            debug_end_row = row - 1
-
-            # Add border to the table
-            for r in range(debug_data_start - 1, debug_end_row + 1):
-                for c in range(1, len(debug_df.columns) + 1):
-                    ws.cell(row=r, column=c).border = thin_border
-
-        # Add Initial Balances section
-        row += 3
-        ws[f'A{row}'] = 'INITIAL BALANCES'
-        ws[f'A{row}'].font = Font(size=14, bold=True)
-        ws.merge_cells(f'A{row}:C{row}')
-        ws[f'A{row}'].alignment = Alignment(horizontal='center')
-        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
-
-        row += 2
-
-        # Add headers for initial balances
-        ws.cell(row=row, column=1, value="Currency").font = Font(bold=True)
-        ws.cell(row=row, column=2, value="Initial Balance").font = Font(bold=True)
-        ws.cell(row=row, column=1).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
-        ws.cell(row=row, column=2).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
-
-        row += 1
-        initial_balances_start = row
-
-        # Add initial balances data
-        for currency, balance in results.get('initial_balances', {}).items():
-            ws.cell(row=row, column=1, value=currency)
-            ws.cell(row=row, column=2, value=f"{float(balance):.5f}")
-            row += 1
-
-        # Add initial USDT rate
-        ws.cell(row=row, column=1, value="Initial USDT Rate (AED)")
-        ws.cell(row=row, column=2, value=f"{results.get('initial_usdt_rate', 0):.5f}")
-
-        initial_balances_end = row
-
-        # Add border to the initial balances table
-        for r in range(initial_balances_start - 1, initial_balances_end + 1):
-            for c in range(1, 3):
-                ws.cell(row=r, column=c).border = thin_border
 
         # Add Final Balances section
-        row += 3
+        row += 2  # Reduce space
         ws[f'A{row}'] = 'FINAL BALANCES'
-        ws[f'A{row}'].font = Font(size=14, bold=True)
+        ws[f'A{row}'].font = Font(size=10, bold=True)
         ws.merge_cells(f'A{row}:C{row}')
         ws[f'A{row}'].alignment = Alignment(horizontal='center')
         ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
-        row += 2
+        # Add subtitle explaining the table
+        row += 1
+        ws[f'A{row}'] = 'Closing balances and rates at the end of the period'
+        ws[f'A{row}'].font = Font(size=8, italic=True)
+        ws.merge_cells(f'A{row}:C{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+
+        row += 1  # Reduce space
 
         # Add headers for final balances
         ws.cell(row=row, column=1, value="Currency").font = Font(bold=True)
         ws.cell(row=row, column=2, value="Final Balance").font = Font(bold=True)
+        ws.cell(row=row, column=3, value="Value (AED)").font = Font(bold=True)
         ws.cell(row=row, column=1).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
         ws.cell(row=row, column=2).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        ws.cell(row=row, column=3).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
         row += 1
         final_balances_start = row
 
         # Add final balances data
+        aed_balance = 0
+        usdt_balance = 0
+        usdt_in_aed = 0
+
         for currency, balance in results['final_balances'].items():
             ws.cell(row=row, column=1, value=currency)
             ws.cell(row=row, column=2, value=f"{balance:.5f}")
+
+            # Calculate AED value
+            if currency == 'AED':
+                aed_value = balance
+                aed_balance = aed_value
+                ws.cell(row=row, column=3, value=f"{aed_value:.5f}")
+            elif currency == 'USDT':
+                usdt_balance = balance
+                usdt_value = results['final_usdt_value']
+                usdt_in_aed = usdt_value
+                ws.cell(row=row, column=3, value=f"{usdt_value:.5f}")
+            else:
+                ws.cell(row=row, column=3, value="-")
+
             row += 1
 
-        # Add USDT rate and value
+        # Add USDT rate
         ws.cell(row=row, column=1, value="USDT Rate (AED)")
         ws.cell(row=row, column=2, value=f"{results['final_usdt_rate']:.5f}")
+        ws.cell(row=row, column=3, value="-")
         row += 1
 
-        ws.cell(row=row, column=1, value="USDT Value (AED)")
-        ws.cell(row=row, column=2, value=f"{results['final_usdt_value']:.5f}")
+        # Add subtotal for AED + USDT converted to AED
+        subtotal_aed = aed_balance + usdt_in_aed
+        ws.cell(row=row, column=1, value="Subtotal (AED + USDT in AED)")
+        ws.cell(row=row, column=2, value="-")
+        ws.cell(row=row, column=3, value=f"{subtotal_aed:.5f}")
+        ws.cell(row=row, column=3).font = Font(bold=True)
+        row += 1
+
+        # Add Voo Payment receivables if available
+        voo_payment_receivables = results.get('evoucher_aed_received', 0)
+        if voo_payment_receivables == 0 and manual_aed_received > 0:
+            voo_payment_receivables = manual_aed_received
+        ws.cell(row=row, column=1, value="Voo Payment Receivables (AED)")
+        ws.cell(row=row, column=2, value=f"{voo_payment_receivables:.5f}")
+        ws.cell(row=row, column=3, value=f"{voo_payment_receivables:.5f}")
         row += 1
 
         # Add total value
-        total_value_aed = results['final_balances'].get('AED', 0) + results['final_usdt_value']
+        total_final_aed = subtotal_aed + voo_payment_receivables
         ws.cell(row=row, column=1, value="Total Value (AED)")
-        ws.cell(row=row, column=2, value=f"{total_value_aed:.5f}")
-        ws.cell(row=row, column=2).font = Font(bold=True)
+        ws.cell(row=row, column=2, value="-")
+        ws.cell(row=row, column=3, value=f"{total_final_aed:.5f}")
+        ws.cell(row=row, column=3).font = Font(bold=True)
 
         final_balances_end = row
 
         # Add border to the final balances table
         for r in range(final_balances_start - 1, final_balances_end + 1):
-            for c in range(1, 3):
+            for c in range(1, 4):  # Extended to include the AED value column
                 ws.cell(row=r, column=c).border = thin_border
 
         # Add Profit Summary section
-        row += 3
+        row += 2  # Reduce space
         ws[f'A{row}'] = 'PROFIT SUMMARY'
-        ws[f'A{row}'].font = Font(size=14, bold=True)
+        ws[f'A{row}'].font = Font(size=10, bold=True)
         ws.merge_cells(f'A{row}:C{row}')
         ws[f'A{row}'].alignment = Alignment(horizontal='center')
         ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
-        row += 2
+        # Add subtitle explaining the table
+        row += 1
+        ws[f'A{row}'] = 'Summary of profits from P2P and E-Voucher transactions'
+        ws[f'A{row}'].font = Font(size=8, italic=True)
+        ws.merge_cells(f'A{row}:C{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+
+        row += 1  # Reduce space
 
         # Add headers for profit summary
         ws.cell(row=row, column=1, value="Profit Type").font = Font(bold=True)
@@ -753,26 +856,6 @@ def export_to_excel(results, manual_aed_received=0):
         # Add E-Voucher details
         ws.cell(row=row, column=1, value="Total E-Voucher Profit")
         ws.cell(row=row, column=2, value=f"{results['total_evoucher_profit']:.5f}")
-
-        # Add E-Voucher breakdown in additional columns
-        ws.cell(row=row, column=3, value="E-Voucher Details:")
-        ws.cell(row=row, column=3).font = Font(italic=True)
-        row += 1
-
-        # Add AED received and USDT cost
-        # Use the manually entered value if available, otherwise use the calculated value
-        aed_received = manual_aed_received if manual_aed_received > 0 else results.get('evoucher_aed_received', 0)
-
-        ws.cell(row=row, column=1, value="E-Voucher AED Received")
-        ws.cell(row=row, column=2, value=f"{aed_received:.5f}")
-        if manual_aed_received > 0:
-            ws.cell(row=row, column=3, value="(Manual Entry)")
-        row += 1
-
-        ws.cell(row=row, column=1, value="E-Voucher USDT Cost")
-        # Calculate USDT cost: AED received - profit
-        usdt_cost = aed_received - results['total_evoucher_profit']
-        ws.cell(row=row, column=2, value=f"{usdt_cost:.5f}")
         row += 1
 
         # Add total profit
@@ -787,18 +870,285 @@ def export_to_excel(results, manual_aed_received=0):
             for c in range(1, 3):
                 ws.cell(row=r, column=c).border = thin_border
 
-        # Set fixed column widths instead of auto-adjusting
-        # This avoids issues with merged cells
-        from openpyxl.utils import get_column_letter
+        # Add USDT Sell Transactions Details table
+        row += 2  # Reduce space
+        ws[f'A{row}'] = 'USDT SELL TRANSACTIONS DETAILS'
+        ws[f'A{row}'].font = Font(size=10, bold=True)
+        ws.merge_cells(f'A{row}:G{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+        ws[f'A{row}'].fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
-        # Set default width for all columns
+        # Add subtitle explaining the table
+        row += 1
+        ws[f'A{row}'] = 'This table shows detailed calculations for each USDT sell transaction, including the original purchase rates'
+        ws[f'A{row}'].font = Font(size=8, italic=True)
+        ws.merge_cells(f'A{row}:G{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+
+        row += 1  # Reduce space
+
+        # Add Debug Transactions data if available
+        if results['debug_transactions'] is not None and not results['debug_transactions'].empty:
+            # Create a custom table for USDT sell transactions
+            debug_df = results['debug_transactions'].copy()
+
+            # Define custom columns for better readability
+            custom_columns = [
+                "Date",
+                "USDT Amount",
+                "Sell Rate (AED)",
+                "Total Value (AED)",
+                "Original Purchase Rate",
+                "Profit (AED)",
+                "USDT Used Details"
+            ]
+
+            # Add headers
+            for c_idx, col_name in enumerate(custom_columns, 1):
+                cell = ws.cell(row=row, column=c_idx, value=col_name)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+                cell.alignment = Alignment(horizontal='center')
+
+            row += 1
+            debug_data_start = row
+
+            # Add data rows
+            for _, data_row in debug_df.iterrows():
+                # Date
+                cell = ws.cell(row=row, column=1, value=data_row.get('date', ''))
+                cell.alignment = Alignment(horizontal='left')
+
+                # USDT Amount
+                cell = ws.cell(row=row, column=2, value=f"{float(data_row.get('usdt_amount', 0)):.5f}")
+                cell.alignment = Alignment(horizontal='right')
+
+                # Sell Rate
+                cell = ws.cell(row=row, column=3, value=f"{float(data_row.get('sell_price', 0)):.5f}")
+                cell.alignment = Alignment(horizontal='right')
+
+                # Total Value
+                cell = ws.cell(row=row, column=4, value=f"{float(data_row.get('total_sell_value', 0)):.5f}")
+                cell.alignment = Alignment(horizontal='right')
+
+                # Original Purchase Rate
+                cell = ws.cell(row=row, column=5, value=f"{float(data_row.get('original_purchase_rate', 0)):.5f}")
+                cell.alignment = Alignment(horizontal='right')
+
+                # Profit
+                cell = ws.cell(row=row, column=6, value=f"{float(data_row.get('profit', 0)):.5f}")
+                cell.alignment = Alignment(horizontal='right')
+
+                # USDT Used Details - Format as multi-line text with better formatting
+                usdt_used = data_row.get('usdt_used', [])
+                if isinstance(usdt_used, list) and usdt_used:
+                    usdt_details = []
+                    for i, (amount, price) in enumerate(usdt_used, 1):
+                        # Format with line number for better readability
+                        usdt_details.append(f"{i}. {amount:.5f} @ {price:.5f}")
+
+                    # Join with line breaks for multi-line cell
+                    usdt_details_text = "\n".join(usdt_details)
+
+                    cell = ws.cell(row=row, column=7, value=usdt_details_text)
+                    # Set alignment and wrap text for multi-line display
+                    cell.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+                    # Set row height to accommodate multiple lines but keep it reasonable
+                    line_count = min(len(usdt_details), 5)  # Limit to 5 visible lines max
+                    ws.row_dimensions[row].height = 12 * (line_count + 1)
+                else:
+                    cell = ws.cell(row=row, column=7, value="No details")
+                    cell.alignment = Alignment(horizontal='left')
+
+                row += 1
+
+            debug_end_row = row - 1
+
+            # Add border to the table
+            for r in range(debug_data_start - 1, debug_end_row + 1):
+                for c in range(1, len(custom_columns) + 1):
+                    ws.cell(row=r, column=c).border = thin_border
+
+
+
+        # Set page setup for A4 printing
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.page import PageMargins
+
+        # Set page to A4 size
+        ws.page_setup.paperSize = 9  # A4 paper
+        ws.page_setup.orientation = 'portrait'
+        ws.page_setup.fitToPage = True
+        ws.page_setup.fitToHeight = 0  # Auto
+        ws.page_setup.fitToWidth = 1  # Fit to 1 page wide
+
+        # Set minimal margins to maximize content area
+        ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.25, bottom=0.25)
+
+        # Set print title rows (headers)
+        ws.print_title_rows = f'1:5'  # Repeat first 5 rows on each page
+
+        # Set column widths optimized for A4 - with fix for merged cells
+        # Narrower columns to fit more on a page
         for i in range(1, 20):  # Assuming we won't have more than 20 columns
             column_letter = get_column_letter(i)
-            ws.column_dimensions[column_letter].width = 15
+            ws.column_dimensions[column_letter].width = 10  # Make columns narrower
 
         # Set specific widths for certain columns
-        ws.column_dimensions['A'].width = 20  # First column (usually dates or descriptions)
-        ws.column_dimensions['B'].width = 20  # Second column
+        ws.column_dimensions['A'].width = 13  # First column (usually dates)
+        ws.column_dimensions['B'].width = 20  # Transaction column - wider for wrapped text
+
+        # Set font size smaller for better fit
+        from openpyxl.styles import Font
+        default_font = Font(name='Arial', size=9)  # Smaller font size
+
+        # Apply smaller font to all cells - with fix for merged cells
+        for row in ws.iter_rows():
+            for cell in row:
+                # Skip merged cells
+                if isinstance(cell, openpyxl.cell.cell.MergedCell):
+                    continue
+
+                if cell.font.size is None or cell.font.size > 9:
+                    new_font = Font(
+                        name='Arial',
+                        size=9,
+                        bold=cell.font.bold,
+                        italic=cell.font.italic,
+                        color=cell.font.color
+                    )
+                    cell.font = new_font
+
+        # Save the workbook to the BytesIO object
+        wb.save(output)
+        output.seek(0)
+
+        return output
+
+    except Exception as e:
+        st.error(f"Error exporting to Excel: {str(e)}")
+        return None
+
+# Function to combine multiple Excel files
+def combine_excel_files(files, preview_only=False, max_preview_rows=100):
+    try:
+        all_dfs = []
+        file_names = []
+
+        # Process each file
+        for file in files:
+            try:
+                # Read Excel file
+                df = pd.read_excel(file)
+
+                # Add file name as a column for reference
+                file_name = os.path.basename(file.name) if hasattr(file, 'name') else "Unknown"
+                df['Source File'] = file_name
+                file_names.append(file_name)
+
+                # Add to list of dataframes
+                all_dfs.append(df)
+            except Exception as e:
+                st.error(f"Error reading file {file.name if hasattr(file, 'name') else 'Unknown'}: {str(e)}")
+                continue
+
+        if not all_dfs:
+            st.error("No valid Excel files were found.")
+            return None, None
+
+        # Combine all dataframes
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+
+        # If preview only, return a limited number of rows
+        if preview_only:
+            preview_df = combined_df.head(max_preview_rows)
+            return preview_df, file_names
+
+        return combined_df, file_names
+
+    except Exception as e:
+        st.error(f"Error combining Excel files: {str(e)}")
+        return None, None
+
+# Function to export combined data to Excel
+def export_combined_excel(combined_df, file_names):
+    try:
+        # Create a BytesIO object to store the Excel file
+        output = io.BytesIO()
+
+        # Create a workbook
+        wb = Workbook()
+
+        # Use the default sheet
+        ws = wb.active
+        ws.title = "Combined Data"
+
+        # Add title
+        ws['A1'] = 'Combined Excel Data'
+        ws['A1'].font = Font(size=14, bold=True)
+        ws.merge_cells('A1:E1')
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        # Add subtitle with file names
+        row = 2
+        ws[f'A{row}'] = f'Files combined: {", ".join(file_names)}'
+        ws[f'A{row}'].font = Font(size=10, italic=True)
+        ws.merge_cells(f'A{row}:E{row}')
+        ws[f'A{row}'].alignment = Alignment(horizontal='center')
+
+        row += 2  # Add some space
+
+        # Add headers
+        for c_idx, col_name in enumerate(combined_df.columns, 1):
+            cell = ws.cell(row=row, column=c_idx, value=col_name)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+            cell.alignment = Alignment(horizontal='center')
+
+        row += 1
+
+        # Add data rows
+        for _, data_row in combined_df.iterrows():
+            for c_idx, value in enumerate(data_row, 1):
+                cell = ws.cell(row=row, column=c_idx, value=value)
+
+                # Format dates and numbers
+                if isinstance(value, (int, float)):
+                    cell.number_format = '0.00000'
+                    cell.alignment = Alignment(horizontal='right')
+                elif isinstance(value, datetime):
+                    cell.number_format = 'yyyy-mm-dd'
+                    cell.alignment = Alignment(horizontal='center')
+                else:
+                    cell.alignment = Alignment(horizontal='left')
+
+            row += 1
+
+        # Add border to the table
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
+                            top=Side(style='thin'), bottom=Side(style='thin'))
+
+        for r in range(4, row):
+            for c in range(1, len(combined_df.columns) + 1):
+                ws.cell(row=r, column=c).border = thin_border
+
+        # Auto-adjust column widths - with fix for merged cells
+        for i, column in enumerate(ws.columns):
+            max_length = 0
+            column_letter = get_column_letter(i+1)  # Get column letter directly from index
+
+            for cell in column:
+                # Skip merged cells
+                if isinstance(cell, openpyxl.cell.cell.MergedCell):
+                    continue
+
+                if cell.value:
+                    cell_length = len(str(cell.value))
+                    if cell_length > max_length:
+                        max_length = cell_length
+
+            adjusted_width = max_length + 2
+            ws.column_dimensions[column_letter].width = min(adjusted_width, 30)  # Cap width at 30
 
         # Save the workbook to the BytesIO object
         wb.save(output)
@@ -882,6 +1232,27 @@ def load_settings():
         st.error(f"Error loading settings: {str(e)}")
     return {}
 
+# Function to transfer final balances to initial settings
+def transfer_final_balances_to_settings(results):
+    try:
+        # Get current settings
+        settings = load_settings()
+
+        # Update initial balances with final balances
+        settings['initial_balances'] = results['final_balances']
+
+        # Update initial USDT rate with final USDT rate
+        settings['initial_usdt_rate'] = results['final_usdt_rate']
+
+        # Save updated settings
+        if save_settings(settings):
+            return True
+        else:
+            return False
+    except Exception as e:
+        st.error(f"Error transferring balances: {str(e)}")
+        return False
+
 # Main application
 def main():
     # Initialize session state for settings if not already done
@@ -940,11 +1311,11 @@ def main():
     # E-Voucher AED received
     st.sidebar.subheader("E-Voucher Settings")
     evoucher_aed_received = st.sidebar.number_input(
-        "Total AED Received from Workers",
+        "Total AED Received by Voo Payment",
         value=st.session_state.evoucher_aed_received,
         step=100.0,
         format="%.15f",
-        help="Enter the total AED amount received from workers for E-Voucher transactions",
+        help="Enter the total AED amount received by Voo Payment from workers for E-Voucher transactions (receivable from Voo Payment)",
         key="evoucher_aed"
     )
     # Update session state
@@ -994,88 +1365,149 @@ def main():
         else:
             st.sidebar.error("Failed to save settings.")
 
-    # File uploader
-    st.sidebar.subheader("Upload Transaction File")
+    # Create main tabs
+    main_tabs = st.tabs(["تتبع المعاملات", "دمج الملفات"])
 
-    # Initialize last_file_path in session state if not present
-    if 'last_file_path' not in st.session_state:
-        st.session_state.last_file_path = saved_settings.get('last_file_path', '')
+    # Tab for transaction tracking
+    with main_tabs[0]:
+        # File uploader
+        st.subheader("Upload Transaction File")
 
-    # Show last used file path if available
-    if st.session_state.last_file_path:
-        st.sidebar.info(f"Last used file: {os.path.basename(st.session_state.last_file_path)}")
+        # Initialize last_file_path in session state if not present
+        if 'last_file_path' not in st.session_state:
+            st.session_state.last_file_path = saved_settings.get('last_file_path', '')
 
-        # Option to use the last file
-        if os.path.exists(st.session_state.last_file_path) and st.sidebar.button("📂 Use Last File"):
-            uploaded_file = open(st.session_state.last_file_path, "rb")
+        # Show last used file path if available
+        if st.session_state.last_file_path:
+            st.info(f"Last used file: {os.path.basename(st.session_state.last_file_path)}")
+
+            # Option to use the last file
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if os.path.exists(st.session_state.last_file_path) and st.button("📂 Use Last File"):
+                    uploaded_file = open(st.session_state.last_file_path, "rb")
+                else:
+                    uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx", "csv"])
         else:
-            uploaded_file = st.sidebar.file_uploader("Choose an Excel file", type=["xlsx", "csv"])
-    else:
-        uploaded_file = st.sidebar.file_uploader("Choose an Excel file", type=["xlsx", "csv"])
+            uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx", "csv"])
 
-    # Save file path if a file is uploaded
-    if uploaded_file is not None and hasattr(uploaded_file, 'name'):
-        try:
-            # Try to get the file path
-            file_path = uploaded_file.name
-            if os.path.exists(file_path):
-                st.session_state.last_file_path = file_path
-                # Update settings
-                settings = {
-                    'initial_balances': st.session_state.initial_balances,
-                    'initial_usdt_rate': st.session_state.initial_usdt_rate,
-                    'evoucher_aed_received': st.session_state.evoucher_aed_received,
-                    'additional_currencies': st.session_state.additional_currencies,
-                    'last_file_path': file_path
-                }
-                save_settings(settings)
-        except:
-            pass  # Ignore if we can't get the file path
+        # Save file path if a file is uploaded
+        if uploaded_file is not None and hasattr(uploaded_file, 'name'):
+            try:
+                # Try to get the file path
+                file_path = uploaded_file.name
+                if os.path.exists(file_path):
+                    st.session_state.last_file_path = file_path
+                    # Update settings
+                    settings = {
+                        'initial_balances': st.session_state.initial_balances,
+                        'initial_usdt_rate': st.session_state.initial_usdt_rate,
+                        'evoucher_aed_received': st.session_state.evoucher_aed_received,
+                        'additional_currencies': st.session_state.additional_currencies,
+                        'last_file_path': file_path
+                    }
+                    save_settings(settings)
+            except:
+                pass  # Ignore if we can't get the file path
 
-    if uploaded_file is not None:
-        # Process data
-        results = process_data(uploaded_file, initial_balances, initial_usdt_rate)
+        if uploaded_file is not None:
+            # Process data
+            results = process_data(uploaded_file, initial_balances, initial_usdt_rate)
 
-        # Update E-Voucher profit with manually entered AED amount
-        if results and evoucher_aed_received > 0:
-            # Get all E-Voucher sell transactions
-            evoucher_df = results['transactions'][
-                (results['transactions']['TradeType'] == 'E-Voucher') &
-                (results['transactions']['Type'] == 'Sell')
-            ]
+            # Update E-Voucher profit with manually entered AED amount
+            if results and evoucher_aed_received > 0:
+                # Get all E-Voucher sell transactions
+                evoucher_df = results['transactions'][
+                    (results['transactions']['TradeType'] == 'E-Voucher') &
+                    (results['transactions']['Type'] == 'Sell')
+                ]
 
-            if not evoucher_df.empty:
-                # Calculate the cost of USDT sold
-                total_usdt_cost = 0
-                for _, row in evoucher_df.iterrows():
-                    usdt_amount = row['USDT']
-                    # Find the corresponding row in balance history
-                    idx = results['balance_history'][results['balance_history']['Date'] == row['Date']].index[0]
-                    usdt_rate = results['balance_history'].loc[idx, 'Current USDT Rate']
-                    total_usdt_cost += usdt_amount * usdt_rate
+                if not evoucher_df.empty:
+                    # Calculate the cost of USDT sold
+                    total_usdt_cost = 0
+                    for _, row in evoucher_df.iterrows():
+                        usdt_amount = row['USDT']
+                        # Find the corresponding row in balance history
+                        idx = results['balance_history'][results['balance_history']['Date'] == row['Date']].index[0]
+                        usdt_rate = results['balance_history'].loc[idx, 'Current USDT Rate']
+                        total_usdt_cost += usdt_amount * usdt_rate
 
-                # Calculate profit
-                results['total_evoucher_profit'] = evoucher_aed_received - total_usdt_cost
+                    # Calculate profit
+                    results['total_evoucher_profit'] = evoucher_aed_received - total_usdt_cost
 
-        if results:
-            # Create tabs
-            tabs = st.tabs(["Dashboard", "Cash Flow", "Transactions", "P2P Analysis", "E-Voucher Analysis", "Debug"])
+            if results:
+                # Create tabs
+                tabs = st.tabs(["Dashboard", "Cash Flow", "Transactions", "P2P Analysis", "E-Voucher Analysis", "Debug"])
 
             # Dashboard tab
             with tabs[0]:
-                # Add export to Excel button at the top of the dashboard
-                col1, col2 = st.columns([3, 1])
+                # Add export to Excel button and transfer balances button at the top of the dashboard
+                col1, col2, col3 = st.columns([2, 1, 1])
                 with col2:
                     # Create Excel export button
                     excel_data = export_to_excel(results, evoucher_aed_received)
+                    # Make sure evoucher_aed_received is included in results
+                    results['evoucher_aed_received'] = evoucher_aed_received
                     if excel_data:
+                        # Get transaction date range for the filename
+                        file_date = "no_data"
+                        if not results['cash_flow'].empty:
+                            try:
+                                # Get only the first date of transactions
+                                first_date = results['cash_flow']['Date'].iloc[0] if 'Date' in results['cash_flow'].columns else ""
+
+                                # Make sure date is string
+                                first_date = str(first_date)
+
+                                # Extract just the date part (remove time if present)
+                                if ' ' in first_date:
+                                    first_date = first_date.split(' ')[0]
+
+                                # Format date for filename (YYYY-MM-DD format)
+                                # Convert from DD/MM/YYYY to YYYY-MM-DD if needed
+                                if '/' in first_date:
+                                    parts = first_date.split('/')
+                                    if len(parts) == 3:
+                                        # Assuming DD/MM/YYYY format
+                                        day, month, year = parts
+                                        file_date = f"{year}-{month}-{day}"
+                                    else:
+                                        file_date = first_date.replace('/', '-')
+                                else:
+                                    file_date = first_date
+
+                            except Exception as e:
+                                # If there's any error, use a default name
+                                from datetime import datetime
+                                today = datetime.now().strftime("%Y-%m-%d")
+                                file_date = today
+                                st.warning(f"Could not format date for filename: {str(e)}")
+
+                        # Get total profit for filename
+                        total_profit = results['total_p2p_profit'] + results['total_evoucher_profit']
+                        profit_str = f"{total_profit:.2f}AED"
+
+                        # Create a professional filename with date and profit
+                        excel_filename = f"P2P_Report_{file_date}_Profit_{profit_str}.xlsx"
+
                         st.download_button(
                             label="📊 Export All Data to Excel",
                             data=excel_data,
-                            file_name="p2p_tracker_data.xlsx",
+                            file_name=excel_filename,
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             help="Export all data from all tabs to a single Excel file with multiple sheets"
                         )
+
+                with col3:
+                    # Create transfer balances button
+                    if st.button(
+                        "🔄 Transfer Closing Balances",
+                        help="Transfer closing balances to become opening balances for the next session"
+                    ):
+                        if transfer_final_balances_to_settings(results):
+                            st.success("Closing balances successfully transferred to opening balances!")
+                        else:
+                            st.error("Failed to transfer balances.")
 
                 # Summary metrics - using custom styled cards
                 st.markdown(f"""
@@ -1089,6 +1521,7 @@ def main():
                 <div class="profit-card">
                     <div class="profit-title">Total E-Voucher Profit (AED)</div>
                     <div class="profit-value">{results['total_evoucher_profit']:.5f}</div>
+                    <div class="profit-subtitle">Receivable from Voo Payment</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1103,18 +1536,26 @@ def main():
                 st.info("""
                 **Profit Calculation:**
                 - **P2P Profit**: Calculated from P2P transactions only, using the FIFO method (first in, first out)
-                - **E-Voucher Profit**: Calculated separately as (AED received from workers - cost of USDT sold)
+                - **E-Voucher Profit**: Calculated as (AED received by Voo Payment - cost of USDT sold)
+                  * Note: This profit is receivable from Voo Payment, as they receive the AED from workers
                 - **Total Profit**: Sum of P2P and E-Voucher profits
                 """)
+
 
                 # Final balances
                 st.subheader("Final Balances")
 
-                # Calculate total value in AED (only AED and USDT)
-                total_value_aed = (
+                # Calculate total value in AED (AED + USDT + Voo Payment receivables)
+                owned_assets_value = (
                     results['final_balances'].get('AED', 0) +
                     results['final_usdt_value']
                 )
+
+                # Get Voo Payment receivables
+                voo_payment_receivables = evoucher_aed_received if evoucher_aed_received > 0 else 0
+
+                # Calculate total value including receivables
+                total_value_aed = owned_assets_value + voo_payment_receivables
 
                 # Display each currency in a separate card
                 for currency, balance in results['final_balances'].items():
@@ -1122,7 +1563,7 @@ def main():
                         st.markdown(f"""
                         <div class="currency-card">
                             <div class="currency-title">{currency}</div>
-                            <div class="currency-value">{balance:.15f}</div>
+                            <div class="currency-value">{balance:.5f}</div>
                             <div class="currency-subtitle">≈ {results['final_usdt_value']:.5f} AED</div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -1130,7 +1571,7 @@ def main():
                         st.markdown(f"""
                         <div class="currency-card">
                             <div class="currency-title">{currency}</div>
-                            <div class="currency-value">{balance:.15f}</div>
+                            <div class="currency-value">{balance:.5f}</div>
                             <div class="currency-subtitle">Not included in total value</div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -1138,7 +1579,7 @@ def main():
                         st.markdown(f"""
                         <div class="currency-card">
                             <div class="currency-title">{currency}</div>
-                            <div class="currency-value">{balance:.15f}</div>
+                            <div class="currency-value">{balance:.5f}</div>
                         </div>
                         """, unsafe_allow_html=True)
 
@@ -1150,12 +1591,30 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
 
+                # Display owned assets value
+                st.markdown(f"""
+                <div class="total-value-card" style="background-color: #f5f5f5; margin-bottom: 10px;">
+                    <div class="currency-title">Owned Assets Value (AED)</div>
+                    <div class="currency-value">{owned_assets_value:.5f}</div>
+                    <div class="currency-subtitle">Sum of AED and USDT value that you directly own</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Display Voo Payment receivables
+                st.markdown(f"""
+                <div class="total-value-card" style="background-color: #f0f8ff; margin-bottom: 10px;">
+                    <div class="currency-title">Voo Payment Receivables (AED)</div>
+                    <div class="currency-value">{voo_payment_receivables:.5f}</div>
+                    <div class="currency-subtitle">Amount receivable from Voo Payment</div>
+                </div>
+                """, unsafe_allow_html=True)
+
                 # Display total value
                 st.markdown(f"""
-                <div class="total-value-card">
+                <div class="total-value-card" style="background-color: #e6ffe6; border: 2px solid #4CAF50;">
                     <div class="currency-title">Total Value (AED)</div>
                     <div class="currency-value">{total_value_aed:.5f}</div>
-                    <div class="currency-subtitle">Sum of AED and USDT value</div>
+                    <div class="currency-subtitle">Sum of Owned Assets ({owned_assets_value:.5f}) + Voo Payment Receivables ({voo_payment_receivables:.5f})</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1291,12 +1750,14 @@ def main():
                     # Explanation of E-Voucher profit calculation
                     st.info(f"""
                     **E-Voucher Profit Calculation:**
-                    1. Total AED received from workers: {aed_received:.15f} AED {' (Manual Entry)' if evoucher_aed_received > 0 else ''}
+                    1. Total AED received by Voo Payment from workers: {aed_received:.15f} AED {' (Manual Entry)' if evoucher_aed_received > 0 else ''}
                     2. Minus the cost of USDT sold: {evoucher_summary['Total USDT Sold']:.15f} USDT at average rate
                     3. Total cost of USDT: {(results['total_evoucher_profit'] - aed_received) * -1:.15f} AED
                     4. Profit: {results['total_evoucher_profit']:.15f} AED
 
-                    Note: The EGP sent to families is not counted as an asset since it's transferred out
+                    **Important Notes:**
+                    - The AED amount is received by Voo Payment, not by you directly. This amount is receivable from Voo Payment.
+                    - The EGP sent to families is not counted as an asset since it's transferred out.
                     """)
 
                     # Display exchange rate chart
@@ -1337,6 +1798,84 @@ def main():
                                 st.write(f"- {line}")
                 else:
                     st.info("No debug information available.")
+
+    # Tab for Excel Files Merger
+    with main_tabs[1]:
+        st.subheader("دمج ملفات Excel متعددة")
+
+        st.markdown("""
+        <div style="background-color: #f0f8ff; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+            <h4 style="color: #1E88E5;">تعليمات الاستخدام</h4>
+            <p>هذه الأداة تسمح لك بدمج عدة ملفات Excel في ملف واحد مع الحفاظ على عناوين الأعمدة.</p>
+            <ol>
+                <li>قم بتحميل ملفات Excel المتعددة التي تريد دمجها</li>
+                <li>سيتم عرض معاينة للبيانات المدمجة</li>
+                <li>اضغط على زر "تصدير البيانات المدمجة إلى Excel" لتحميل الملف النهائي</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # File uploader for multiple files
+        uploaded_files = st.file_uploader("اختر ملفات Excel للدمج", type=["xlsx", "xls"], accept_multiple_files=True)
+
+        if uploaded_files:
+            # Show number of files uploaded
+            st.success(f"تم تحميل {len(uploaded_files)} ملفات")
+
+            # List file names
+            with st.expander("عرض أسماء الملفات المحملة"):
+                for i, file in enumerate(uploaded_files):
+                    st.write(f"{i+1}. {file.name}")
+
+            # Combine files and show preview
+            preview_df, file_names = combine_excel_files(uploaded_files, preview_only=True, max_preview_rows=100)
+
+            if preview_df is not None:
+                st.subheader("معاينة البيانات المدمجة")
+                st.dataframe(preview_df, use_container_width=True)
+
+                # Show column information
+                with st.expander("معلومات الأعمدة"):
+                    st.write(f"عدد الأعمدة: {len(preview_df.columns)}")
+                    st.write("أسماء الأعمدة:")
+                    for col in preview_df.columns:
+                        st.write(f"- {col}")
+
+                # Export button
+                st.subheader("تصدير البيانات المدمجة")
+
+                # Get full combined data (not just preview)
+                full_df, _ = combine_excel_files(uploaded_files, preview_only=False)
+
+                if full_df is not None:
+                    # Create Excel export
+                    excel_data = export_combined_excel(full_df, file_names)
+
+                    if excel_data:
+                        # Create filename with current date
+                        from datetime import datetime
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        excel_filename = f"Combined_Excel_Data_{today}.xlsx"
+
+                        # Download button
+                        st.download_button(
+                            label="📊 تصدير البيانات المدمجة إلى Excel",
+                            data=excel_data,
+                            file_name=excel_filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            help="تحميل جميع البيانات المدمجة في ملف Excel واحد"
+                        )
+
+                        # Show statistics
+                        st.subheader("إحصائيات البيانات المدمجة")
+                        st.write(f"إجمالي عدد الصفوف: {len(full_df)}")
+                        st.write(f"إجمالي عدد الأعمدة: {len(full_df.columns)}")
+
+                        # Show data types
+                        with st.expander("أنواع البيانات"):
+                            st.write(full_df.dtypes)
+        else:
+            st.info("الرجاء تحميل ملفات Excel للدمج")
 
 if __name__ == "__main__":
     main()
